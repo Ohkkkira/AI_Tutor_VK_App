@@ -1,8 +1,12 @@
-const tg = window.Telegram.WebApp;
+// VK Bridge is loaded in index.html and exposed as the global `vkBridge`
+vkBridge.send("VKWebAppInit");
 
-tg.expand();
+const BACKEND_URL = "https://ai-tutor-vk.vercel.app";
 
-const BACKEND_URL = "https://aitutorbot.onrender.com";
+// VK opens the mini app with launch params in the URL query string:
+// ?vk_user_id=...&vk_app_id=...&sign=...
+// The backend validates this exact string, so we pass it as-is.
+const launchParams = window.location.search.slice(1);
 
 const challenges = [
 
@@ -50,6 +54,14 @@ document.getElementById("challenge-text").innerText =
 document.getElementById("challenge-image").src =
   randomChallenge.image;
 
+// Haptic feedback works only in VK mobile clients,
+// so failures (e.g. on desktop) are silently ignored
+function haptic(type) {
+  vkBridge
+    .send("VKWebAppTapticNotificationOccurred", { type })
+    .catch(() => {});
+}
+
 document.getElementById("accept-btn")
 .addEventListener("click", async () => {
 
@@ -62,7 +74,7 @@ document.getElementById("accept-btn")
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        initData: tg.initData,
+        initData: launchParams,
         challenge: randomChallenge.title,
         text: randomChallenge.text
       })
@@ -72,14 +84,20 @@ document.getElementById("accept-btn")
       throw new Error("Server responded " + response.status);
     }
 
-    tg.HapticFeedback.notificationOccurred("success");
-    tg.close();
+    haptic("success");
+
+    btn.innerText = "Challenge sent! Check the chat ✓";
+
+    // Close the mini app (supported in VK mobile clients;
+    // on desktop the user just sees the confirmation above)
+    vkBridge.send("VKWebAppClose", { status: "success" })
+      .catch(() => {});
 
   } catch (e) {
 
     console.error(e);
-    tg.HapticFeedback.notificationOccurred("error");
-    tg.showAlert("Something went wrong. Please try again.");
+    haptic("error");
+    alert("Something went wrong. Please try again.");
     btn.disabled = false;
 
   }
