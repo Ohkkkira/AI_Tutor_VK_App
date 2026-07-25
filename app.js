@@ -1,7 +1,7 @@
 // VK Bridge is loaded in index.html and exposed as the global `vkBridge`
 vkBridge.send("VKWebAppInit");
 
-const BACKEND_URL = "https://ai-tutor-vk.vercel.app";
+const BACKEND_URL = "https://ai-tutor-vk.vercel.app/";
 
 // VK opens the mini app with launch params in the URL query string:
 // ?vk_user_id=...&vk_app_id=...&sign=...
