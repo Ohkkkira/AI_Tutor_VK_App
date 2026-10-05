@@ -1,5 +1,8 @@
 const BACKEND_URL = "https://ai-tutor-vk.vercel.app";
 
+const DEFAULT_BUTTON_TEXT = "Accept Challenge";
+const SUCCESS_BUTTON_TEXT = "Challenge sent! Check the chat ✓";
+
 const challenges = [
   {
     title: "Convince Me",
@@ -28,17 +31,57 @@ const challenges = [
   }
 ];
 
-const randomChallenge =
-  challenges[Math.floor(Math.random() * challenges.length)];
+/*
+ * Текущий челлендж. Раньше был const и выбирался один раз
+ * при загрузке страницы, поэтому после восстановления
+ * свёрнутого WebView показывался тот же самый.
+ */
+let randomChallenge = null;
 
-document.getElementById("challenge-title").innerText =
-  randomChallenge.title;
+/*
+ * Флаг, чтобы не сбрасывать UI посреди отправки запроса.
+ */
+let isSending = false;
 
-document.getElementById("challenge-text").innerText =
-  randomChallenge.text;
 
-document.getElementById("challenge-image").src =
-  randomChallenge.image;
+/*
+ * Выбирает новый челлендж (по возможности не повторяя текущий)
+ * и возвращает UI в исходное состояние.
+ */
+function renderChallenge() {
+
+  if (isSending) return;
+
+  let next;
+
+  do {
+    next = challenges[
+      Math.floor(Math.random() * challenges.length)
+    ];
+  } while (
+    challenges.length > 1 &&
+    randomChallenge &&
+    next.title === randomChallenge.title
+  );
+
+  randomChallenge = next;
+
+  document.getElementById("challenge-title").innerText =
+    randomChallenge.title;
+
+  document.getElementById("challenge-text").innerText =
+    randomChallenge.text;
+
+  document.getElementById("challenge-image").src =
+    randomChallenge.image;
+
+  const button = document.getElementById("accept-btn");
+
+  if (button) {
+    button.disabled = false;
+    button.innerText = DEFAULT_BUTTON_TEXT;
+  }
+}
 
 
 function haptic(type) {
@@ -140,7 +183,70 @@ async function getLaunchParams() {
 }
 
 
+/*
+ * Подписываемся на события, которые означают,
+ * что пользователь вернулся в уже открытое приложение.
+ *
+ * Мобильный ВК после VKWebAppClose часто не уничтожает WebView,
+ * а сворачивает его. При повторном открытии страница
+ * восстанавливается из памяти вместе со всем состоянием JS,
+ * поэтому кнопка оставалась в статусе "Challenge sent!".
+ */
+function subscribeToRestoreEvents() {
+
+  if (window.vkBridge) {
+
+    vkBridge.subscribe((event) => {
+
+      const type =
+        event &&
+        event.detail &&
+        event.detail.type;
+
+      if (type === "VKWebAppViewRestore") {
+
+        console.log(
+          "Mini App restored, resetting UI"
+        );
+
+        renderChallenge();
+      }
+
+    });
+  }
+
+
+  /*
+   * Страховка на случай восстановления страницы
+   * из back/forward cache в WebView или браузере.
+   */
+  window.addEventListener(
+    "pageshow",
+    (event) => {
+      if (event.persisted) {
+        renderChallenge();
+      }
+    }
+  );
+}
+
+
 async function initMiniApp() {
+
+  /*
+   * Первичная отрисовка челленджа.
+   */
+
+  renderChallenge();
+
+
+  /*
+   * Подписка ставится до VKWebAppInit,
+   * чтобы не пропустить ранние события.
+   */
+
+  subscribeToRestoreEvents();
+
 
   /*
    * Инициализируем VK Bridge.
@@ -202,6 +308,9 @@ async function initMiniApp() {
     "click",
     async () => {
 
+      if (isSending) return;
+
+      isSending = true;
       button.disabled = true;
 
 
@@ -284,7 +393,23 @@ async function initMiniApp() {
 
 
         button.innerText =
-          "Challenge sent! Check the chat ✓";
+          SUCCESS_BUTTON_TEXT;
+
+
+        isSending = false;
+
+
+        /*
+         * Возвращаем UI в исходное состояние через паузу.
+         * Даже если ВК восстановит свёрнутое приложение
+         * без события VKWebAppViewRestore, пользователь
+         * не увидит "залипшую" кнопку.
+         */
+
+        setTimeout(
+          renderChallenge,
+          1500
+        );
 
 
         /*
@@ -324,6 +449,7 @@ async function initMiniApp() {
         );
 
 
+        isSending = false;
         button.disabled = false;
 
       }
