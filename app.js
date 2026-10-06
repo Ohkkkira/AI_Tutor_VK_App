@@ -1,5 +1,11 @@
 const BACKEND_URL = "https://ai-tutor-vk.vercel.app";
 
+/*
+ * ID сообщества бота (club240091971).
+ * Нужен для VKWebAppSendPayload.
+ */
+const GROUP_ID = 240091971;
+
 const DEFAULT_BUTTON_TEXT = "Accept Challenge";
 const SUCCESS_BUTTON_TEXT = "Challenge sent! Check the chat ✓";
 
@@ -184,6 +190,88 @@ async function getLaunchParams() {
 
 
 /*
+ * Основной способ отправки: через ВКонтакте.
+ *
+ * VKWebAppSendPayload передаёт данные боту сообщества,
+ * а бот получает их событием app_payload через Callback API.
+ * Запрос идёт с серверов ВК на Vercel, поэтому не зависит
+ * от того, доступен ли vercel.app из сети пользователя.
+ */
+async function sendViaPayload(challenge) {
+
+  if (!window.vkBridge) {
+    throw new Error("VK Bridge is not available");
+  }
+
+  const result = await vkBridge.send(
+    "VKWebAppSendPayload",
+    {
+      group_id: GROUP_ID,
+      payload: {
+        challenge: challenge.title,
+        text: challenge.text
+      }
+    }
+  );
+
+  if (!result || result.result !== true) {
+    throw new Error("VKWebAppSendPayload returned no result");
+  }
+}
+
+
+/*
+ * Запасной способ: прямой запрос к бэкенду.
+ * Срабатывает, только если VKWebAppSendPayload недоступен
+ * (например, приложение открыто не из чата с ботом).
+ */
+async function sendViaBackend(challenge, launchParams) {
+
+  if (!launchParams) {
+    throw new Error(
+      "VK launch parameters were not found. Open the app from VK."
+    );
+  }
+
+  const response = await fetch(
+    `${BACKEND_URL}/webapp-data`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        initData: launchParams,
+        challenge: challenge.title,
+        text: challenge.text
+      })
+    }
+  );
+
+  let result = {};
+
+  try {
+    result = await response.json();
+  } catch (_) {
+    result = {};
+  }
+
+  console.log(
+    "Backend response:",
+    response.status,
+    result
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      result.error ||
+      `Backend returned HTTP ${response.status}`
+    );
+  }
+}
+
+
+/*
  * Подписываемся на события, которые означают,
  * что пользователь вернулся в уже открытое приложение.
  *
@@ -316,74 +404,27 @@ async function initMiniApp() {
 
       try {
 
-        if (!launchParams) {
-
-          throw new Error(
-            "VK launch parameters were not found. Open the app from VK."
-          );
-
-        }
-
-
         console.log(
-          "Sending challenge to backend..."
+          "Sending challenge via VKWebAppSendPayload..."
         );
-
-
-        const response =
-          await fetch(
-            `${BACKEND_URL}/webapp-data`,
-            {
-              method: "POST",
-
-              headers: {
-                "Content-Type":
-                  "application/json"
-              },
-
-              body: JSON.stringify({
-
-                initData:
-                  launchParams,
-
-                challenge:
-                  randomChallenge.title,
-
-                text:
-                  randomChallenge.text
-
-              })
-            }
-          );
-
-
-        let result = {};
 
 
         try {
 
-          result =
-            await response.json();
+          await sendViaPayload(
+            randomChallenge
+          );
 
-        } catch (_) {
+        } catch (payloadError) {
 
-          result = {};
+          console.warn(
+            "VKWebAppSendPayload failed, falling back to backend:",
+            payloadError
+          );
 
-        }
-
-
-        console.log(
-          "Backend response:",
-          response.status,
-          result
-        );
-
-
-        if (!response.ok) {
-
-          throw new Error(
-            result.error ||
-            `Backend returned HTTP ${response.status}`
+          await sendViaBackend(
+            randomChallenge,
+            launchParams
           );
 
         }
@@ -441,11 +482,16 @@ async function initMiniApp() {
         haptic("error");
 
 
+        const isNetworkError =
+          error instanceof TypeError;
+
         alert(
-          `Ошибка: ${
-            error.message ||
-            "Unknown error"
-          }`
+          isNetworkError
+            ? "Не удалось связаться с сервером. Проверьте чат: если челлендж не пришёл, попробуйте ещё раз."
+            : `Ошибка: ${
+                error.message ||
+                "Unknown error"
+              }`
         );
 
 
